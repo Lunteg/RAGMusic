@@ -108,7 +108,7 @@ class MusicBot:
             f"{row['track_name']} by {row['artist_name']}" for _, row in recommendations.iterrows()]
         context = "Это рекомендуемая песни: " + "; ".join(search_results)
 
-        system_context = """Вы - бот, который дает рекомендации по песням.
+        system_context = f"""Вы - бот, который дает рекомендации по песням.
         Вы отвечаете очень короткими предложениями и не добавляете лишней информации. Ответ должен быть на руском языке
         {context}
         """
