@@ -15,7 +15,7 @@ class MusicBot:
     user_history = {}
 
     def __init__(self):
-        self.conn = sqlite3.connect("data.db")
+        self.conn = sqlite3.connect("/app/data/data.db")
         self.cursor = self.conn.cursor()
         self.df = pd.read_sql_query("SELECT * FROM my_table", self.conn)
         
