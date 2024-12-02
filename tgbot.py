@@ -19,11 +19,17 @@ class MusicBot:
         self.cursor = self.conn.cursor()
         self.df = pd.read_sql_query("SELECT * FROM my_table", self.conn)
         
-        self.vectorizer = TfidfVectorizer(max_features=5000)
-        self.embeddings = self.create_embeddings()
+        # Индексы и векторизаторы
+        self.title_artist_vectorizer = TfidfVectorizer(max_features=5000)
+        self.feature_vectorizer = None  # Векторизация характеристик
         
-        # Настройка FAISS
-        self.index = self.create_faiss_index(self.embeddings)
+        # Создание эмбеддингов
+        self.title_artist_embeddings = self.create_title_artist_embeddings()
+        self.feature_embeddings = self.create_feature_embeddings()
+        
+        # Создание FAISS индексов
+        self.title_artist_index = self.create_faiss_index(self.title_artist_embeddings)
+        self.feature_index = self.create_faiss_index(self.feature_embeddings)
 
         # Настройка GigaChat
         giga_key = os.environ.get("SB_AUTH_DATA")
@@ -64,10 +70,27 @@ class MusicBot:
 
         return [row[0] for row in rows]
     
-    def create_embeddings(self):
-        """Создает TF-IDF векторизацию описаний треков."""
-        descriptions = self.df["lyrics"].fillna("")  # Используем текст описаний или лирики
-        embeddings = self.vectorizer.fit_transform(descriptions)
+    def create_title_artist_embeddings(self):
+        """Создаёт TF-IDF векторизацию по названию и автору."""
+        data = (self.df["track_name"] + " " + self.df["artist_name"]).fillna("")
+        embeddings = self.title_artist_vectorizer.fit_transform(data)
+        return embeddings.toarray()
+    
+    def create_feature_embeddings(self):
+        """Создаёт эмбеддинги на основе музыкальных характеристик."""
+        feature_columns = [
+            "lyrics", "genre", "dating", "violence", "shake the audience", "family/gospel",
+            "romantic", "communication", "obscene", "music", "movement/places", 
+            "light/visual perceptions", "family/spiritual", "like/girls", "sadness", 
+            "feelings", "danceability", "loudness", "acousticness", "instrumentalness", 
+            "valence", "energy", "topic", "age"
+        ]
+        
+        # Заполняем пропуски и объединяем характеристики
+        features = self.df[feature_columns].fillna("").astype(str).apply(" ".join, axis=1)
+        
+        self.feature_vectorizer = TfidfVectorizer(max_features=10000)
+        embeddings = self.feature_vectorizer.fit_transform(features)
         return embeddings.toarray()
     
     def create_faiss_index(self, embeddings):
@@ -81,19 +104,16 @@ class MusicBot:
         return index
 
     # Функция для поиска похожих треков
-    def search_similar_tracks(self, query, top_k=5):
-        """Ищет похожие треки через FAISS."""
-        query_vector = self.vectorizer.transform([query]).toarray().astype(np.float32)
-        distances, indices = self.index.search(query_vector, k=top_k)
-        
-        # Извлекаем индексы найденных треков
-        similar_indices = indices[0]
-        return self.df.iloc[similar_indices]
+    def search_by_title_and_artist(self, query, top_k=5):
+        """Ищет треки по названию и автору."""
+        query_vector = self.title_artist_vectorizer.transform([query]).toarray().astype(np.float32)
+        distances, indices = self.title_artist_index.search(query_vector, k=top_k)
+        return self.df.iloc[indices[0]]
 
     # Основной обработчик команды для поиска песни
     async def find_track(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_input = update.message.text
-        similar_tracks = self.search_similar_tracks(user_input, top_k=5)
+        similar_tracks = self.search_by_title_and_artist(user_input, top_k=5)
 
         if similar_tracks.empty:
             await update.message.reply_text("Не удалось найти похожие песни.")
@@ -135,7 +155,19 @@ class MusicBot:
        
         response = "История прослушивания:\n"
         await update.message.reply_text(response + '\n'.join(listening_history))
-        
+       
+    def recommend_based_on_features(self, history_track_ids, top_k=10):
+        """Рекомендует треки на основе музыкальных характеристик."""
+        if not history_track_ids:
+            return pd.DataFrame()
+
+        # Получаем эмбеддинги для треков из истории
+        history_embeddings = self.feature_embeddings[history_track_ids]
+        user_profile_vector = np.mean(history_embeddings, axis=0).reshape(1, -1).astype(np.float32)
+
+        # Ищем треки, похожие на профиль пользователя
+        distances, indices = self.feature_index.search(user_profile_vector, k=top_k)
+        return self.df.iloc[indices[0]]
         
     async def recommend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.message.from_user.id
@@ -147,30 +179,38 @@ class MusicBot:
             await update.message.reply_text("У вас нет истории поиска.")
             return
 
-        print(listening_history)
-        # Генерация контекста для рекомендаций
-        context = self.df.iloc[listening_history]
-        print(context.iterrows())
-        recommendations = self.generate_recommendations(context.iterrows())
+        # Ищем похожие треки на основе истории
+        similar_tracks = self.recommend_based_on_features(listening_history, top_k=5)
+
+        if similar_tracks.empty:
+            await update.message.reply_text("Не удалось найти похожие треки.")
+            return
+        
+        recommendations = self.generate_recommendations(similar_tracks.iterrows())
         await update.message.reply_text(recommendations)
     
-    def generate_recommendations(self, context):
+    def generate_recommendations(self, similar_tracks):
         """Генерирует текстовые рекомендации через GigaChat."""
+        # Генерация контекста для рекомендаций
         structured_context = "\n\n".join(
-        [
-            f"Песня {i + 1}:\n"
-            f"Название: {row['track_name']}\n"
-            f"Исполнитель: {row['artist_name']}\n"
-            f"Жанр: {row.get('genre', 'не указан')}\n"
-            f"Текст: {row['lyrics'][:500]}..."  # Ограничиваем текст лирики
-            for i, row in context
-        ]
-    )
+            [
+                f"Песня {i + 1}:\n"
+                f"Название: {row['track_name']}\n"
+                f"Исполнитель: {row['artist_name']}\n"
+                f"Жанр: {row.get('genre', 'не указан')}\n"
+                f"Текст: {row['lyrics'][:500]}..."  # Ограничиваем текст лирики
+                for i, row in similar_tracks
+            ]
+        )
+        # Формируем системный запрос
         system_context = (
             f"Вы музыкальный бот, который предлагает рекомендации на основе песен. "
-            f"Вот список песен:\n\n{structured_context}\n\n"
-            f"Рекомендуйте похожие песни, основываясь на жанре, тексте и настроении."
+            f"Вот список песен похожих на то, что слушает пользователь:\n\n{structured_context}\n\n"
+            f"Ты должен предложить ему песни из этого списка и объяснить почему."
+            f"Ответ должен выглядеть так, как будто ты общаешься с пользователем."
         )
+        print(structured_context)
+        
         response = self.giga.invoke(system_context)
         return response.content
 
