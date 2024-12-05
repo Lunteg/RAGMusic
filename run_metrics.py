@@ -1,6 +1,6 @@
 import sqlite3
 
-from metrics import novelty, personalization, mean_ap_at_k, nd
+from metrics import novelty, personalization, mean_ap_at_k, mean_ndcg_at_k
 
 conn = sqlite3.connect('data.db')
 cursor = conn.cursor()
