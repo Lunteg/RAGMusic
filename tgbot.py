@@ -18,17 +18,18 @@ class MusicBot:
         self.conn = sqlite3.connect("/app/data/data.db")
         self.cursor = self.conn.cursor()
         self.df = pd.read_sql_query("SELECT * FROM my_table", self.conn)
-        
+
         # Индексы и векторизаторы
         self.title_artist_vectorizer = TfidfVectorizer(max_features=5000)
         self.feature_vectorizer = None  # Векторизация характеристик
-        
+
         # Создание эмбеддингов
         self.title_artist_embeddings = self.create_title_artist_embeddings()
         self.feature_embeddings = self.create_feature_embeddings()
-        
+
         # Создание FAISS индексов
-        self.title_artist_index = self.create_faiss_index(self.title_artist_embeddings)
+        self.title_artist_index = self.create_faiss_index(
+            self.title_artist_embeddings)
         self.feature_index = self.create_faiss_index(self.feature_embeddings)
 
         # Настройка GigaChat
@@ -58,7 +59,7 @@ class MusicBot:
         self.conn.commit()
 
     # Функция для получения истории пользователя
-    def get_user_history(self, user_id, returning_field = 'track_id'):
+    def get_user_history(self, user_id, returning_field='track_id'):
         if returning_field == 'track_id':
             self.cursor.execute(
                 'SELECT track_id FROM history WHERE user_id = ?', (user_id,))
@@ -69,45 +70,50 @@ class MusicBot:
             rows = self.cursor.fetchall()
 
         return [row[0] for row in rows]
-    
+
     def create_title_artist_embeddings(self):
         """Создаёт TF-IDF векторизацию по названию и автору."""
-        data = (self.df["track_name"] + " " + self.df["artist_name"]).fillna("")
+        data = (self.df["track_name"] + " " +
+                self.df["artist_name"]).fillna("")
         embeddings = self.title_artist_vectorizer.fit_transform(data)
         return embeddings.toarray()
-    
+
     def create_feature_embeddings(self):
         """Создаёт эмбеддинги на основе музыкальных характеристик."""
         feature_columns = [
             "lyrics", "genre", "dating", "violence", "shake the audience", "family/gospel",
-            "romantic", "communication", "obscene", "music", "movement/places", 
-            "light/visual perceptions", "family/spiritual", "like/girls", "sadness", 
-            "feelings", "danceability", "loudness", "acousticness", "instrumentalness", 
+            "romantic", "communication", "obscene", "music", "movement/places",
+            "light/visual perceptions", "family/spiritual", "like/girls", "sadness",
+            "feelings", "danceability", "loudness", "acousticness", "instrumentalness",
             "valence", "energy", "topic", "age"
         ]
-        
+
         # Заполняем пропуски и объединяем характеристики
-        features = self.df[feature_columns].fillna("").astype(str).apply(" ".join, axis=1)
-        
+        features = self.df[feature_columns].fillna(
+            "").astype(str).apply(" ".join, axis=1)
+
         self.feature_vectorizer = TfidfVectorizer(max_features=10000)
         embeddings = self.feature_vectorizer.fit_transform(features)
         return embeddings.toarray()
-    
+
     def create_faiss_index(self, embeddings):
         """Создает FAISS индекс."""
         # Создаем FAISS индекс для векторов L2
         index = faiss.IndexFlatL2(embeddings.shape[1])
-        
+
         # Добавляем embeddings в индекс
-        embeddings = embeddings.astype(np.float32)  # FAISS требует тип данных float32
+        # FAISS требует тип данных float32
+        embeddings = embeddings.astype(np.float32)
         index.add(embeddings)
         return index
 
     # Функция для поиска похожих треков
     def search_by_title_and_artist(self, query, top_k=5):
         """Ищет треки по названию и автору."""
-        query_vector = self.title_artist_vectorizer.transform([query]).toarray().astype(np.float32)
-        distances, indices = self.title_artist_index.search(query_vector, k=top_k)
+        query_vector = self.title_artist_vectorizer.transform(
+            [query]).toarray().astype(np.float32)
+        distances, indices = self.title_artist_index.search(
+            query_vector, k=top_k)
         return self.df.iloc[indices[0]]
 
     # Основной обработчик команды для поиска песни
@@ -133,7 +139,7 @@ class MusicBot:
         await update.message.reply_text(
             "Выберите песню из списка:", reply_markup=reply_markup
         )
-    
+
     async def track_selection_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
@@ -148,14 +154,14 @@ class MusicBot:
         # Отправляем информацию о треке
         response = f"Вы выбрали песню:\nНазвание: {track['track_name']}\nИсполнитель: {track['artist_name']}"
         await query.edit_message_text(text=response)
-        
+
     async def history(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.message.from_user.id
         listening_history = self.get_user_history(user_id, 'track_name')
-       
+
         response = "История прослушивания:\n"
         await update.message.reply_text(response + '\n'.join(listening_history))
-       
+
     def recommend_based_on_features(self, history_track_ids, top_k=10):
         """Рекомендует треки на основе музыкальных характеристик."""
         if not history_track_ids:
@@ -163,12 +169,14 @@ class MusicBot:
 
         # Получаем эмбеддинги для треков из истории
         history_embeddings = self.feature_embeddings[history_track_ids]
-        user_profile_vector = np.mean(history_embeddings, axis=0).reshape(1, -1).astype(np.float32)
+        user_profile_vector = np.mean(
+            history_embeddings, axis=0).reshape(1, -1).astype(np.float32)
 
         # Ищем треки, похожие на профиль пользователя
-        distances, indices = self.feature_index.search(user_profile_vector, k=top_k)
+        distances, indices = self.feature_index.search(
+            user_profile_vector, k=top_k)
         return self.df.iloc[indices[0]]
-        
+
     async def recommend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.message.from_user.id
 
@@ -180,15 +188,17 @@ class MusicBot:
             return
 
         # Ищем похожие треки на основе истории
-        similar_tracks = self.recommend_based_on_features(listening_history, top_k=5)
+        similar_tracks = self.recommend_based_on_features(
+            listening_history, top_k=5)
 
         if similar_tracks.empty:
             await update.message.reply_text("Не удалось найти похожие треки.")
             return
-        
-        recommendations = self.generate_recommendations(similar_tracks.iterrows())
+
+        recommendations = self.generate_recommendations(
+            similar_tracks.iterrows())
         await update.message.reply_text(recommendations)
-    
+
     def generate_recommendations(self, similar_tracks):
         """Генерирует текстовые рекомендации через GigaChat."""
         # Генерация контекста для рекомендаций
@@ -210,7 +220,7 @@ class MusicBot:
             f"Ответ должен выглядеть так, как будто ты общаешься с пользователем."
         )
         print(structured_context)
-        
+
         response = self.giga.invoke(system_context)
         return response.content
 
