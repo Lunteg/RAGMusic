@@ -1,6 +1,6 @@
 import sqlite3
 
-from metrics import novelty, personalization, ILS
+from metrics import novelty, personalization, mean_ap_at_k, nd
 
 conn = sqlite3.connect('data.db')
 cursor = conn.cursor()
@@ -22,10 +22,8 @@ for row in cursor.fetchall():
 conn.close()
 
 novelty_scores = novelty(recommendations)
-# ILS_scores = ILS(recommendations)
 personalization_scores = personalization(recommendations)
 
-print('user_id: \t', user_ids)
+# print('user_id: \t', user_ids)
 print('novelty: \t', novelty_scores)
-# print('ILS: ', novelty_scores)
 print('personalization:', personalization_scores)
