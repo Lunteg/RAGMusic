@@ -2,7 +2,7 @@ import sqlite3
 
 from metrics import novelty, personalization, mean_ap_at_k, mean_ndcg_at_k
 
-conn = sqlite3.connect('data.db')
+conn = sqlite3.connect('data/data.db')
 cursor = conn.cursor()
 
 cursor.execute("""
@@ -27,3 +27,5 @@ personalization_scores = personalization(recommendations)
 # print('user_id: \t', user_ids)
 print('novelty: \t', novelty_scores)
 print('personalization:', personalization_scores)
+print(mean_ap_at_k([["a", "b", "c"]], [["a", "b"]], 10))
+print(mean_ndcg_at_k([["a", "b", "c"]], [["a", "b"]], 10))

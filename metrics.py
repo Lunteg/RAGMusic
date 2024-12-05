@@ -183,7 +183,7 @@ def ndcg_at_k(recommended: list[str], relevant: list[str], k: int) -> float:
     k = min(k, len(recommended))
     recommended = recommended[:k].copy()
 
-    idcg = sum(1 / np.log2(i + 1) for i in range(k))
+    idcg = sum(1 / np.log2(i + 1) for i in range(1, k + 1))
     dcg = dcg_at_k(recommended, relevant, k)
 
     return dcg / idcg
@@ -191,15 +191,12 @@ def ndcg_at_k(recommended: list[str], relevant: list[str], k: int) -> float:
 
 def mean_ndcg_at_k(all_recommended: list[list[str]], all_relevant: list[list[str]], k: int) -> float:
     """
-    calculates mean average precision at k across multiple queries
+    calculates normalized discounted cumulative gain at k across multiple queries
 
     Parameters:
     all_recommended: list containing recommended items for each query.
     all_relevant: list containing relevant items for each query.
     k: number of top recommendations to consider.
-
-    Returns:
-    float: Mean Average Precision at K value.
     """
     ndgc_scores = [ndcg_at_k(recommended, relevant, k)
                    for recommended, relevant in zip(all_recommended, all_relevant)]
