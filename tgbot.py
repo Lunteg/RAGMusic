@@ -40,9 +40,15 @@ class MusicBot:
         bot_token = os.environ.get("TELEGRAM_API")
         app = ApplicationBuilder().token(bot_token).build()
 
+        # Команда /start
+        app.add_handler(CommandHandler("start", self.start))
+        # Команда /help
+        app.add_handler(CommandHandler("help", self.help_command))
         # Команда /recommend
         app.add_handler(CommandHandler("recommend", self.recommend))
+        # Команда /history
         app.add_handler(CommandHandler("history", self.history))
+        
         # Прием названия песни от пользователя
         app.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND, self.find_track))
@@ -69,6 +75,16 @@ class MusicBot:
             rows = self.cursor.fetchall()
 
         return [row[0] for row in rows]
+    
+    async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        help_text = (
+            "Доступные команды:\\n"
+            "/start - Начать работу с ботом\\n"
+            "/help - Показать это меню помощи\\n"
+            "/recommend - Показать рекомендации\\n"
+            "Просто отправьте название трека, чтобы начать собирать историю для рекомендаций!"
+        )
+        await update.message.reply_text(help_text)
     
     def create_title_artist_embeddings(self):
         """Создаёт TF-IDF векторизацию по названию и автору."""
@@ -109,7 +125,21 @@ class MusicBot:
         query_vector = self.title_artist_vectorizer.transform([query]).toarray().astype(np.float32)
         distances, indices = self.title_artist_index.search(query_vector, k=top_k)
         return self.df.iloc[indices[0]]
-
+    
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Обработчик команды /start.
+        """
+        welcome_message = (
+            "👋 Добро пожаловать в MusicBot! 🎶\n\n"
+            "Вот что я умею:\n"
+            "1️⃣ Отправьте название песни, чтобы начать собирать историю для ваших рекомендаций.\n"
+            "2️⃣ Используйте команду /recommend для получения рекомендаций на основе вашей истории.\n"
+            "3️⃣ Используйте команду /history, чтобы посмотреть историю прослушиваний.\n\n"
+            "Попробуйте прямо сейчас отправить название песни, чтобы начать! 🚀"
+        )
+        await update.message.reply_text(welcome_message)
+        
     # Основной обработчик команды для поиска песни
     async def find_track(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_input = update.message.text
@@ -166,8 +196,15 @@ class MusicBot:
         user_profile_vector = np.mean(history_embeddings, axis=0).reshape(1, -1).astype(np.float32)
 
         # Ищем треки, похожие на профиль пользователя
-        distances, indices = self.feature_index.search(user_profile_vector, k=top_k)
-        return self.df.iloc[indices[0]]
+        distances, indices = self.feature_index.search(user_profile_vector, k=top_k + len(history_track_ids))
+        
+        # Исключаем треки из истории
+        recommended_indices = [idx for idx in indices[0] if idx not in history_track_ids]
+        
+        # Урезаем до `top_k` после фильтрации
+        recommended_indices = recommended_indices[:top_k]
+        
+        return self.df.iloc[recommended_indices]
         
     async def recommend(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.message.from_user.id
@@ -194,20 +231,19 @@ class MusicBot:
         # Генерация контекста для рекомендаций
         structured_context = "\n\n".join(
             [
-                f"Песня {i + 1}:\n"
                 f"Название: {row['track_name']}\n"
                 f"Исполнитель: {row['artist_name']}\n"
                 f"Жанр: {row.get('genre', 'не указан')}\n"
                 f"Текст: {row['lyrics'][:500]}..."  # Ограничиваем текст лирики
-                for i, row in similar_tracks
+                for _, row in similar_tracks
             ]
         )
         # Формируем системный запрос
         system_context = (
-            f"Вы музыкальный бот, который предлагает рекомендации на основе песен. "
+            f"Вы музыкальный бот, который предлагает рекомендации на основе песен."
             f"Вот список песен похожих на то, что слушает пользователь:\n\n{structured_context}\n\n"
             f"Ты должен предложить ему песни из этого списка и объяснить почему."
-            f"Ответ должен выглядеть так, как будто ты общаешься с пользователем."
+            f"Ответ должен быть без вопросов, вступления и заключения, содержать ТОЛЬКО список треков с твоими объяснениями."
         )
         print(structured_context)
         
